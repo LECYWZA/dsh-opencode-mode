@@ -114,6 +114,80 @@ window.__ModuleLoader__.load({
             },
           },
         }), 'opencode-plan-build: /seesession popup'))
+
+        // /models and /effort: real popup pickers over the Host model catalog.
+        ctx.inject(['commandUi', 'sessions', 'remote'], (scope) => {
+          const loadCatalog = () => scope.remote.session.modelCatalog()
+            .then((response) => (response.ok ? response.value : undefined))
+            .catch(() => undefined)
+          const currentSelection = (sessionId) => {
+            const binding = scope.sessions.binding(sessionId)
+            return binding?.session?.projections?.faceOf?.('modelSelection')?.getSnapshot?.()
+          }
+
+          // /models: every provider-grouped model in the catalog.
+          scope.effect(() => scope.commandUi.decorate({
+            name: 'models',
+            available: () => true,
+            ui: {
+              kind: 'popupSelect',
+              options: async () => {
+                const value = await loadCatalog()
+                if (value === undefined) return []
+                const rows = []
+                for (const group of value.groups ?? []) {
+                  for (const model of group.models ?? []) {
+                    rows.push({
+                      id: `${group.id}/${model.id}`,
+                      label: model.name ?? model.id,
+                      detail: group.name ?? group.id,
+                    })
+                  }
+                }
+                return rows
+              },
+              onSelect: (option, session) => {
+                const slash = option.id.indexOf('/')
+                const provider = option.id.slice(0, slash)
+                const model = option.id.slice(slash + 1)
+                return scope.sessions.selectModel({ sessionId: session.sessionId, provider, model }).catch(() => undefined)
+              },
+            },
+          }), 'opencode-plan-build: /models popup')
+
+          // /effort: reasoning levels advertised by the current model.
+          scope.effect(() => scope.commandUi.decorate({
+            name: 'effort',
+            available: () => true,
+            ui: {
+              kind: 'popupSelect',
+              options: async (session) => {
+                const value = await loadCatalog()
+                if (value === undefined) return []
+                const current = currentSelection(session.sessionId)
+                if (current === undefined || current === null) return []
+                const group = (value.groups ?? []).find((candidate) => candidate.id === current.provider)
+                const entry = (group?.models ?? []).find((candidate) => candidate.id === current.model)
+                const efforts = entry?.reasoning?.efforts ?? []
+                return efforts.map((level) => ({
+                  id: level.id,
+                  label: level.name ?? level.id,
+                  active: current.reasoningEffort === level.id,
+                }))
+              },
+              onSelect: (option, session) => {
+                const current = currentSelection(session.sessionId)
+                if (current === undefined || current === null) return undefined
+                return scope.sessions.selectModel({
+                  sessionId: session.sessionId,
+                  provider: current.provider,
+                  model: current.model,
+                  reasoningEffort: option.id,
+                }).catch(() => undefined)
+              },
+            },
+          }), 'opencode-plan-build: /effort popup')
+        })
       },
     }
   },

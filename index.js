@@ -353,16 +353,20 @@ export function apply(ctx, config = {}) {
     handler: () => ({ kind: 'success', text: 'Pick a session from the popup; the left sidebar lists the same set.' }),
   })
 
-  // `/models` — alias of the built-in /model catalog (client popup owns it).
+  // `/models` — host row backing the client popup picker (real model list).
   ctx.commands.register({
     definitionId: 'opencode-plan-build:models',
     name: 'models',
-    description: 'Alias of the model switcher (same catalog as /model)',
-    input: { hint: '[model]' },
-    handler: (invocation) => ({
-      kind: 'success',
-      text: 'Use the /model picker to switch model and reasoning effort (the database is the same; this alias exists for opencode muscle memory).',
-    }),
+    description: 'Switch the model (popup picker)',
+    handler: () => ({ kind: 'success', text: 'Pick a model from the popup (the same catalog /model uses).' }),
+  })
+
+  // `/effort` — host row backing the client popup picker over reasoning levels.
+  ctx.commands.register({
+    definitionId: 'opencode-plan-build:effort',
+    name: 'effort',
+    description: 'Switch the reasoning effort of the current model (popup picker)',
+    handler: () => ({ kind: 'success', text: 'Pick an effort level from the popup (off / low / high / max, as the current model advertises).' }),
   })
 
   // Runtime guard: OC Plan denies formal-directory writes, high-risk commands,
