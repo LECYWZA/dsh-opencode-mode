@@ -243,12 +243,20 @@ test('/seesession lists sessions and reads another transcript', async () => {
   assert.match(read.text, /transcript of session-other/)
 })
 
-test('/models is an alias pointing at the model picker', () => {
+test('/models backs a real popup picker row', () => {
   const { ctx, commands } = mockContext()
   apply(ctx, {})
   const result = commands.get('models').handler({ rawInput: '', agent: { session: mockSession() } })
   assert.equal(result.kind, 'success')
-  assert.match(result.text, /\/model/)
+  assert.match(result.text, /popup/)
+})
+
+test('/effort backs a real popup picker row', () => {
+  const { ctx, commands } = mockContext()
+  apply(ctx, {})
+  const result = commands.get('effort').handler({ rawInput: '', agent: { session: mockSession() } })
+  assert.equal(result.kind, 'success')
+  assert.match(result.text, /effort|level/i)
 })
 
 let failed = 0
