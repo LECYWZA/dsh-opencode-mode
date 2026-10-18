@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "opencode-mode",
+    "description": "opencode-style OC Plan / OC Build slots with Tab switching: read-only planning enforced at dispatch, no approval popups, cache-preserving mode notices."
+  }
+}

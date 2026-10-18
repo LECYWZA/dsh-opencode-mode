@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "opencode 挡位",
+    "description": "opencode 式 OC Plan / OC Build 两个挡位，Tab 键切换：计划挡位在调度层硬拒写操作与高危命令、不弹审批框、挡位提示落尾部消息保前缀缓存。"
+  }
+}

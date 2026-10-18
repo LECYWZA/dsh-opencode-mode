@@ -1,0 +1,42 @@
+# dsh-opencode-mode bundle patch.
+#
+# Two things:
+#   1. Insert the opencode-plan-build host plugin (/mode command, runtime guard,
+#      cache-preserving notices).
+#   2. Offer the two opencode-style permission slots. A profile patch that
+#      defines its own `permission` row replaces this whole config (patches are
+#      whole-config replacements, not deep merges), so the same two slots must
+#      be restated there. `oc-plan` keeps the sandbox writable so /tmp exercises
+#      work; the guard denies every formal-directory write and high-risk command
+#      at runtime.
+- insert:
+    - id: opencode-plan-build
+      name: dsh-opencode-mode
+      config:
+        planPreset: oc-plan
+        buildPreset: oc-build
+
+- id: permission
+  name: '@deepseek-ai/dsh-permission-presets'
+  config:
+    presets:
+      oc-plan:
+        sandbox: workspace-write
+        approval: never
+        name: OC Plan
+        description: opencode 计划挡位——只读调研：临时目录可写，正式目录与高危命令被拒，计划不落盘
+      oc-build:
+        sandbox: workspace-write
+        approval: never
+        name: OC Build
+        description: opencode 执行挡位——可写工作区并执行命令
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+    defaultPreset: oc-build
