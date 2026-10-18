@@ -109,8 +109,15 @@ window.__ModuleLoader__.load({
                 }))
             },
             onSelect: (option) => {
-              const sessionId = currentSessionId()
-              if (sessionId !== undefined) execute(sessionId, `/seesession ${option.id}`)
+              // Insert a session reference into the composer instead of sending:
+              // the user appends their own prompt and sends once, and the
+              // native session-reference service captures the other session's
+              // context at prompt admission.
+              const reference = `@[${option.label}](dsh-session:${option.id}) `
+              const composer = document.querySelector('[contenteditable="true"]')
+              if (composer === null) return
+              composer.focus()
+              document.execCommand('insertText', false, reference)
             },
           },
         }), 'opencode-plan-build: /seesession popup'))

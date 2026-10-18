@@ -185,19 +185,19 @@ test('/redo restores the reverted text as a new injected turn', () => {
   assert.equal(JSON.stringify(injected[0]).includes('first question'), true)
 })
 
-test('/rename pins a title through the title service', () => {
+test('/rename pins a title through the title service', async () => {
   const { ctx, commands, services } = mockContext()
   services.set('sessionTitle', { rename: (session, title) => ({ title }) })
   apply(ctx, {})
-  const result = commands.get('rename').handler({ rawInput: 'My new title', agent: { session: mockSession() } })
+  const result = await commands.get('rename').handler({ rawInput: 'My new title', agent: { session: mockSession() } })
   assert.equal(result.kind, 'success')
   assert.match(result.text, /My new title/)
 })
 
-test('/rename rejects an empty title', () => {
+test('/rename opens a dialog when bare and rejects without a channel', async () => {
   const { ctx, commands } = mockContext()
   apply(ctx, {})
-  const result = commands.get('rename').handler({ rawInput: '', agent: { session: mockSession() } })
+  const result = await commands.get('rename').handler({ rawInput: '', agent: { session: mockSession() } })
   assert.equal(result.kind, 'error')
 })
 

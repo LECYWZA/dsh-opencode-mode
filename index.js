@@ -269,17 +269,38 @@ export function apply(ctx, config = {}) {
     },
   })
 
-  // `/rename [title]` — session title rename (pins the title).
+  // `/rename` — rename through a question form (an input dialog, not the
+  // prompt box): bare `/rename` opens the form, and a typed title skips it.
   ctx.commands.register({
     definitionId: 'opencode-plan-build:rename',
     name: 'rename',
-    description: 'Rename the current session (pins the title)',
-    input: { hint: '<title>' },
-    handler: (invocation) => {
-      const title = invocation.rawInput.trim()
-      if (title === '') return { kind: 'error', text: 'Usage: /rename <title>' }
+    description: 'Rename the current session (opens an input dialog; pins the title)',
+    handler: async (invocation) => {
       const titles = ctx.get('sessionTitle')
       if (titles === undefined) return { kind: 'error', text: 'the session-title service is unavailable in this composition' }
+      let title = invocation.rawInput.trim()
+      if (title === '') {
+        const interaction = ctx.get('userQuestions')
+        if (interaction === undefined) return { kind: 'error', text: 'No question channel is available; use /rename <title> instead.' }
+        let answer
+        try {
+          answer = await interaction.ask({
+            questions: [{
+              id: 'rename',
+              header: 'Rename session',
+              question: 'New session name (leave empty to cancel)',
+              detail: 'The title is pinned once accepted; automatic titles will not overwrite it.',
+              options: [{ label: 'Cancel', description: 'Keep the current title' }],
+            }],
+            agent: invocation.agent,
+          })
+        } catch {
+          return { kind: 'success', text: 'Rename cancelled.' }
+        }
+        const item = answer.answers.find((entry) => entry.id === 'rename')
+        title = (item?.custom ?? '').trim()
+        if (title === '') return { kind: 'success', text: 'Rename cancelled.' }
+      }
       try {
         const snapshot = titles.rename(invocation.agent.session, title)
         return { kind: 'success', text: `Renamed: ${snapshot.title ?? title}` }
