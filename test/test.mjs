@@ -14,14 +14,41 @@ import { apply } from '../index.js'
 const PLAN = 'oc-plan'
 const BUILD = 'oc-build'
 
+/** Optional cross-check against the real DSH URI codec when it is installed. */
+let dshReference
+try {
+  dshReference = await import('/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-reference/lib/types/uri.js')
+} catch {
+  dshReference = undefined
+}
+
+/** Mirror of client.js's browser-side canonical encoder. */
+const encodeSessionReference = (sessionId) => {
+  const bytes = new TextEncoder().encode(JSON.stringify(sessionId))
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '')
+}
+
+/** Mirror of client.js's label escaping for the Markdown mention form. */
+const escapeReferenceLabel = (label) => String(label).replace(/[\\\]]/gu, (match) => `\\${match}`)
+
+/** Mirror of client.js's mention renderer. */
+const formatSessionReference = (sessionId, label) => `@[${escapeReferenceLabel(label ?? sessionId)}](dsh-session:${encodeSessionReference(sessionId)}) `
+
 function mockContext() {
   const commands = new Map()
   const guards = []
   const services = new Map()
+  const contexts = []
   const presets = {
     currentName: BUILD,
     set: (_session, name) => { presets.currentName = name },
     current: () => presets.currentName,
+  }
+  const systemPrompt = {
+    context: (entry) => { contexts.push(entry); return () => {} },
+    getContextOrder: (name) => (name === 'SANDBOX_POLICY' ? 110 : 0),
   }
   const ctx = {
     commands: {
@@ -33,10 +60,19 @@ function mockContext() {
     },
     tools: { guard: (guard) => { guards.push(guard); return () => {} } },
     get: (name) => (name === 'permissionPresets' ? presets : services.get(name)),
+    inject: (_deps, callback) => {
+      const scope = {
+        get: (name) => (name === 'permissionPresets' ? presets : name === 'systemPrompt' ? systemPrompt : services.get(name)),
+        systemPrompt,
+        effect: (callback) => { callback() },
+        logger: ctx.logger,
+      }
+      callback(scope)
+    },
     effect: (callback) => { callback() },
     logger: { warn: () => {} },
   }
-  return { ctx, commands, guards, services, presets }
+  return { ctx, commands, guards, services, presets, contexts, systemPrompt }
 }
 
 function mockSession({ events = [], title = undefined, injected = [] } = {}) {
@@ -78,18 +114,50 @@ test('/mode reports the current slot', () => {
   assert.match(result.text, /oc-plan/)
 })
 
-test('/mode switches the slot and injects a trailing notice', () => {
-  const { ctx, commands, presets } = mockContext()
+test('/mode switches the slot without injecting a model message', () => {
+  const { ctx, commands, contexts, presets } = mockContext()
   apply(ctx, {})
   const injected = []
-  const result = commands.get('mode').handler({
-    rawInput: 'oc-plan',
-    agent: { session: mockSession(), inject: (message) => injected.push(message) },
-  })
+  const agent = { session: mockSession(), inject: (message) => injected.push(message) }
+  const result = commands.get('mode').handler({ rawInput: 'oc-plan', agent })
   assert.equal(result.kind, 'success')
   assert.equal(presets.currentName, PLAN)
-  assert.equal(injected.length, 1)
-  assert.equal(injected[0].role, 'user')
+  commands.get('mode').handler({ rawInput: 'oc-build', agent })
+  assert.equal(injected.length, 0)
+  assert.equal(presets.currentName, BUILD)
+  assert.equal(contexts.length, 1)
+  assert.equal(contexts[0].order, 111)
+})
+
+test('the slot context reports the value at request (send) time', () => {
+  const { ctx, contexts, presets } = mockContext()
+  apply(ctx, {})
+  const session = mockSession()
+  presets.currentName = PLAN
+  assert.match(contexts[0].text({ agent: { session } }), /OC Plan/)
+  presets.currentName = BUILD
+  assert.match(contexts[0].text({ agent: { session } }), /OC Build/)
+})
+
+test('session reference URI is canonical base64url, not a bare id', () => {
+  const id = 'session-d18e7ec8-7048-483b-a9ce-b92c32e61f06'
+  const mention = formatSessionReference(id, '测试会话')
+  assert.match(mention, /^@\[测试会话\]\(dsh-session:[A-Za-z0-9_-]+\) $/u)
+  assert.ok(!mention.includes(`dsh-session:${id}`), 'a bare id must never be used as the payload')
+  const match = mention.match(/^@\[(.+)\]\(dsh-session:([A-Za-z0-9_-]+)\) $/u)
+  assert.notEqual(match, null)
+  assert.equal(JSON.parse(Buffer.from(match[2], 'base64url').toString('utf8')), id)
+  if (dshReference !== undefined) {
+    assert.equal(dshReference.decodeSessionReferenceUri(`dsh-session:${match[2]}`), id)
+    const parsed = dshReference.parseSessionReferenceText(mention.trim())
+    assert.equal(parsed.references[0].sessionId, id)
+    assert.equal(parsed.references[0].label, '测试会话')
+  }
+})
+
+test('session reference labels escape brackets and backslashes', () => {
+  const mention = formatSessionReference('session-x', 'a]b\\c')
+  assert.match(mention, /^@\[a\\\]b\\\\c\]\(dsh-session:/u)
 })
 
 test('/mode rejects unknown slots', () => {
@@ -124,7 +192,7 @@ test('guard allows read-only bash and denies dangerous bash in OC Plan', () => {
   assert.equal(guards[0]({ agent: { session }, name: 'bash', arguments: { command: 'ls -la' } }), undefined)
   assert.equal(guards[0]({ agent: { session }, name: 'bash', arguments: { command: 'git status' } }), undefined)
   assert.equal(guards[0]({ agent: { session }, name: 'bash', arguments: { command: 'ssh root@192.168.123.174 "ls /tmp"' } }), undefined)
-  assert.equal(guards[0]({ agent: { session }, name: 'bash', arguments: { command: 'javac /tmp/Main.java && java -cp /tmp Main' } }), undefined)
+  assert.equal(guards[0]({ agent: { session }, name: 'bash', arguments: { command: 'javac -d /tmp /tmp/Main.java && java -cp /tmp Main' } }), undefined)
   assert.equal(guards[0]({ agent: { session }, name: 'bash', arguments: { command: 'git clone https://github.com/x/y.git /tmp/y' } }), undefined)
   assert.ok(typeof guards[0]({ agent: { session }, name: 'bash', arguments: { command: 'reboot' } }) === 'string')
   assert.ok(typeof guards[0]({ agent: { session }, name: 'bash', arguments: { command: 'apt-get install -y curl' } }) === 'string')
@@ -141,6 +209,55 @@ test('guard is a no-op in OC Build', () => {
   const session = mockSession()
   assert.equal(guards[0]({ agent: { session }, name: 'write', arguments: { path: '/etc/passwd' } }), undefined)
   assert.equal(guards[0]({ agent: { session }, name: 'bash', arguments: { command: 'rm -rf /home/user/project' } }), undefined)
+})
+
+test('OC Plan confines command outputs to the temporary directory', () => {
+  const { ctx, guards, presets } = mockContext()
+  apply(ctx, {})
+  presets.currentName = PLAN
+  const session = mockSession()
+  const verdict = (command) => guards[0]({ agent: { session }, name: 'bash', arguments: { command } })
+  const denied = (command) => {
+    assert.ok(typeof verdict(command) === 'string', `expected denial: ${command}`)
+  }
+  const allowed = (command) => {
+    assert.equal(verdict(command), undefined, `expected allow: ${command}`)
+  }
+
+  allowed('cp a.txt /tmp/a.txt')
+  denied('cp a.txt b.txt')
+  allowed('mv /tmp/a.txt /tmp/b.txt')
+  denied('mv a.txt b.txt')
+  allowed('curl https://example.com')
+  allowed('curl -o /tmp/x https://example.com')
+  denied('curl -o x https://example.com')
+  denied('curl -O https://example.com')
+  allowed('wget -qO- https://example.com')
+  allowed('wget -O /tmp/x https://example.com')
+  denied('wget https://example.com')
+  allowed('cat x | tee /tmp/y')
+  allowed('git clone https://github.com/x/y.git /tmp/y')
+  denied('git clone https://github.com/x/y.git')
+  allowed('pip download -d /tmp/pip pkg')
+  denied('pip download pkg')
+  allowed('npm pack --pack-destination /tmp/npm')
+  denied('npm pack')
+  allowed('javac -d /tmp /tmp/Main.java')
+  denied('javac /tmp/Main.java')
+  allowed('GOCACHE=/tmp/gocache go run main.go')
+  denied('go run main.go')
+  allowed('CARGO_TARGET_DIR=/tmp/cargo cargo build')
+  denied('cargo build')
+  denied('find . -delete')
+  allowed('find . -name "*.txt"')
+  denied('sort -o out.txt in.txt')
+  allowed('sort -o /tmp/out.txt in.txt')
+  denied('awk \'BEGIN{system("rm -rf /")}\'')
+  allowed('awk \'{print $1}\' file.txt')
+  denied('yq -i . a.yaml')
+  denied('make')
+  allowed('ssh root@host "curl -o /tmp/x https://example.com"')
+  denied('ssh root@host "curl -o x https://example.com"')
 })
 
 test('/undo replaces the last user turn in the surface', () => {

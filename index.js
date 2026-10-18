@@ -36,9 +36,9 @@ const TEMP_ROOTS = ['/tmp', '/private/tmp', '/var/tmp', '/dev/shm', '/run/user']
 
 /** Commands whose first token is read-only or scratch-only, prefix matched. */
 const ALLOWED_PREFIXES = [
-  'ls', 'cat', 'head', 'tail', 'wc', 'stat', 'file', 'du', 'df', 'find', 'grep', 'rg',
-  'sed -n', 'awk', 'tree', 'readlink', 'realpath', 'basename', 'dirname', 'sort', 'uniq',
-  'cut', 'tr', 'jq', 'yq', 'md5sum', 'sha256sum', 'diff', 'cmp', 'lsblk', 'lscpu',
+  'ls', 'cat', 'head', 'tail', 'wc', 'stat', 'file', 'du', 'df', 'grep', 'rg',
+  'sed -n', 'tree', 'readlink', 'realpath', 'basename', 'dirname', 'uniq',
+  'cut', 'tr', 'jq', 'md5sum', 'sha256sum', 'diff', 'cmp', 'lsblk', 'lscpu',
   'git status', 'git log', 'git diff', 'git show', 'git branch', 'git rev-parse',
   'git remote', 'git ls-files', 'git blame', 'git stash list', 'git describe',
   'ps', 'top', 'htop', 'uptime', 'free', 'uname', 'hostname', 'date', 'whoami', 'id',
@@ -46,12 +46,11 @@ const ALLOWED_PREFIXES = [
   'journalctl', 'systemctl status', 'systemctl list-units', 'dmesg',
   'docker ps', 'docker images', 'docker logs', 'docker inspect', 'docker stats',
   'docker version', 'docker info',
-  'curl', 'wget', 'ping', 'dig', 'nslookup', 'traceroute', 'ssh',
+  'ping', 'dig', 'nslookup', 'traceroute',
   'mkdir -p /tmp', 'mkdir -p "$TMPDIR', 'touch /tmp', 'mktemp', 'cat > /tmp',
-  'cat >> /tmp', 'echo > /tmp', 'echo >> /tmp', 'tee /tmp', 'cp ', 'mv ',
-  'javac', 'java ', 'python3 -c', 'python -c', 'node -e', 'node -v', 'python3 -V',
-  'go run', 'go build', 'cargo run', 'cargo build', 'rustc', 'gcc ', 'g++ ', 'make',
-  'git clone', 'pip download', 'npm pack', 'npm view', 'pip show', 'pip list',
+  'cat >> /tmp', 'echo > /tmp', 'echo >> /tmp', 'tee /tmp',
+  'python3 -c', 'python -c', 'node -e', 'node -v', 'python3 -V',
+  'java ', 'rustc', 'gcc ', 'g++ ', 'npm view', 'pip show', 'pip list',
 ]
 
 /** First tokens that are always denied in OC Plan. */
@@ -127,6 +126,278 @@ function sshAllowed(part) {
   return true
 }
 
+/** Split one command segment into shell-like tokens (quotes honored). */
+function shellTokens(part) {
+  const tokens = []
+  const pattern = /"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|(\S+)/gu
+  let match
+  while ((match = pattern.exec(part)) !== null) tokens.push(match[1] ?? match[2] ?? match[3])
+  return tokens
+}
+
+/** Collect leading NAME=value environment assignments. */
+function envAssignments(tokens, start) {
+  const map = new Map()
+  for (let index = 0; index < start; index += 1) {
+    const token = tokens[index]
+    const equals = token.indexOf('=')
+    if (equals > 0) map.set(token.slice(0, equals), token.slice(equals + 1))
+  }
+  return map
+}
+
+function cpMvAllowed(tokens, start) {
+  const args = tokens.slice(start + 1)
+  const positionals = []
+  let targetDir
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]
+    if (token === '--') {
+      positionals.push(...args.slice(index + 1))
+      break
+    }
+    if (token === '-t' || token === '--target-directory') {
+      targetDir = args[index + 1]
+      index += 1
+      continue
+    }
+    if (token.startsWith('--target-directory=')) {
+      targetDir = token.slice('--target-directory='.length)
+      continue
+    }
+    if (token.startsWith('-t') && token.length > 2) {
+      targetDir = token.slice(2)
+      continue
+    }
+    if (token.startsWith('-') && token !== '-') continue
+    positionals.push(token)
+  }
+  if (targetDir !== undefined) return isTempPath(targetDir)
+  if (positionals.length < 2) return false
+  return isTempPath(positionals[positionals.length - 1])
+}
+
+function curlAllowed(tokens, start) {
+  const args = tokens.slice(start + 1)
+  const outputs = []
+  let remoteName = false
+  let outputDir
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]
+    if (token === '-o' || token === '--output') {
+      outputs.push(args[index + 1])
+      index += 1
+      continue
+    }
+    if (token.startsWith('--output=')) {
+      outputs.push(token.slice('--output='.length))
+      continue
+    }
+    if (token === '-O' || token === '--remote-name') {
+      remoteName = true
+      continue
+    }
+    if (token === '--output-dir') {
+      outputDir = args[index + 1]
+      index += 1
+      continue
+    }
+    if (token.startsWith('--output-dir=')) {
+      outputDir = token.slice('--output-dir='.length)
+      continue
+    }
+    if (/^-[^-]/u.test(token)) {
+      const short = token.slice(1)
+      const at = short.indexOf('o')
+      if (at >= 0) {
+        const inline = short.slice(at + 1)
+        if (inline !== '') outputs.push(inline)
+        else {
+          outputs.push(args[index + 1])
+          index += 1
+        }
+      }
+      if (short.includes('O')) remoteName = true
+    }
+  }
+  for (const output of outputs) {
+    if (output === undefined || !isTempPath(output)) return false
+  }
+  if (remoteName && (outputDir === undefined || !isTempPath(outputDir))) return false
+  return true
+}
+
+function wgetAllowed(tokens, start) {
+  const args = tokens.slice(start + 1)
+  let document
+  let prefix
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]
+    if (token === '-O' || token === '--output-document') {
+      document = args[index + 1]
+      index += 1
+      continue
+    }
+    if (token.startsWith('--output-document=')) {
+      document = token.slice('--output-document='.length)
+      continue
+    }
+    if (token === '-P' || token === '--directory-prefix') {
+      prefix = args[index + 1]
+      index += 1
+      continue
+    }
+    if (token.startsWith('--directory-prefix=')) {
+      prefix = token.slice('--directory-prefix='.length)
+      continue
+    }
+    if (/^-[^-]/u.test(token)) {
+      const short = token.slice(1)
+      const atO = short.indexOf('O')
+      if (atO >= 0) {
+        const inline = short.slice(atO + 1)
+        if (inline !== '') document = inline
+        else if (args[index + 1] !== undefined && args[index + 1].startsWith('-')) document = '-'
+        else {
+          document = args[index + 1]
+          index += 1
+        }
+      }
+      const atP = short.indexOf('P')
+      if (atP >= 0) {
+        const inline = short.slice(atP + 1)
+        if (inline !== '') prefix = inline
+        else {
+          prefix = args[index + 1]
+          index += 1
+        }
+      }
+    }
+  }
+  if (document !== undefined) return document === '-' || isTempPath(document)
+  if (prefix !== undefined) return isTempPath(prefix)
+  return false
+}
+
+function gitCloneAllowed(tokens, start) {
+  const args = tokens.slice(start + 2)
+  const withValue = new Set([
+    '-b', '--branch', '--depth', '--origin', '-o', '--config', '-c', '--filter',
+    '--reference', '--separate-git-dir', '--template', '--jobs', '-j',
+    '--shallow-since', '--shallow-exclude', '--server-option', '--upload-pack',
+  ])
+  const positionals = []
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]
+    if (token === '--') {
+      positionals.push(...args.slice(index + 1))
+      break
+    }
+    if (token.startsWith('--')) {
+      if (!token.includes('=') && withValue.has(token)) index += 1
+      continue
+    }
+    if (token.startsWith('-')) {
+      if (withValue.has(token)) index += 1
+      continue
+    }
+    positionals.push(token)
+  }
+  if (positionals.length < 2) return false
+  return isTempPath(positionals[positionals.length - 1])
+}
+
+function pipDownloadAllowed(tokens, start) {
+  const args = tokens.slice(start + 2)
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]
+    if (token === '-d' || token === '--dest') return isTempPath(args[index + 1])
+    if (token.startsWith('--dest=')) return isTempPath(token.slice('--dest='.length))
+    if (token.startsWith('-d') && token.length > 2) return isTempPath(token.slice(2))
+  }
+  return false
+}
+
+function npmPackAllowed(tokens, start) {
+  const args = tokens.slice(start + 2)
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]
+    if (token === '--pack-destination') return isTempPath(args[index + 1])
+    if (token.startsWith('--pack-destination=')) return isTempPath(token.slice('--pack-destination='.length))
+  }
+  return false
+}
+
+function javacAllowed(tokens, start) {
+  const args = tokens.slice(start + 1)
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]
+    if (token === '-d') return isTempPath(args[index + 1])
+    if (token.startsWith('-d') && token.length > 2) return isTempPath(token.slice(2))
+  }
+  return false
+}
+
+function goAllowed(tokens, start) {
+  const cache = envAssignments(tokens, start).get('GOCACHE')
+  if (cache === undefined || !isTempPath(cache)) return false
+  const args = tokens.slice(start + 2)
+  if (args.length > 0 && args[0] === 'build') {
+    for (let index = 1; index < args.length; index += 1) {
+      if (args[index] === '-o') return isTempPath(args[index + 1])
+      if (args[index].startsWith('-o') && args[index].length > 2) return isTempPath(args[index].slice(2))
+    }
+    return false
+  }
+  return true
+}
+
+function cargoAllowed(tokens, start) {
+  const target = envAssignments(tokens, start).get('CARGO_TARGET_DIR')
+  return target !== undefined && isTempPath(target)
+}
+
+function sortAllowed(tokens, start) {
+  const args = tokens.slice(start + 1)
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]
+    if (token === '-o' || token === '--output') return isTempPath(args[index + 1])
+    if (token.startsWith('--output=')) return isTempPath(token.slice('--output='.length))
+  }
+  return true
+}
+
+/**
+ * Command-specific write-target checks. Returns undefined for commands this
+ * table does not own (falling through to the prefix table), otherwise the
+ * definitive verdict.
+ */
+function specialAllowed(part) {
+  const tokens = shellTokens(part)
+  if (tokens.length === 0) return false
+  let start = 0
+  while (start < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/u.test(tokens[start])) start += 1
+  const name = tokens[start]
+  if (name === undefined) return false
+  if (name === 'cp' || name === 'mv') return cpMvAllowed(tokens, start)
+  if (name === 'curl') return curlAllowed(tokens, start)
+  if (name === 'wget') return wgetAllowed(tokens, start)
+  if (name === 'git' && tokens[start + 1] === 'clone') return gitCloneAllowed(tokens, start)
+  if ((name === 'pip' || name === 'pip3') && tokens[start + 1] === 'download') return pipDownloadAllowed(tokens, start)
+  if (name === 'npm' && tokens[start + 1] === 'pack') return npmPackAllowed(tokens, start)
+  if (name === 'javac') return javacAllowed(tokens, start)
+  if (name === 'go' && (tokens[start + 1] === 'run' || tokens[start + 1] === 'build')) return goAllowed(tokens, start)
+  if (name === 'cargo' && (tokens[start + 1] === 'run' || tokens[start + 1] === 'build')) return cargoAllowed(tokens, start)
+  if (name === 'make') return false
+  if (name === 'find') return !tokens.some((token) => ['-delete', '-exec', '-execdir', '-ok', '-okdir'].includes(token))
+  if (name === 'sort') return sortAllowed(tokens, start)
+  if (name === 'awk' || name === 'gawk' || name === 'mawk') {
+    return !/\bsystem\s*\(/u.test(part) && !/\bgetline\b/u.test(part)
+  }
+  if (name === 'yq') return !tokens.some((token) => token === '-i' || token === '--inplace' || token.startsWith('--inplace='))
+  return undefined
+}
+
 function singleAllowed(part) {
   if (part === 'ssh' || part.startsWith('ssh ')) return sshAllowed(part)
   for (const denied of DENIED_PREFIXES) {
@@ -137,21 +408,12 @@ function singleAllowed(part) {
   while ((match = redirect.exec(part)) !== null) {
     if (!isTempPath(match[1])) return false
   }
+  const special = specialAllowed(part)
+  if (special !== undefined) return special
   for (const allowed of ALLOWED_PREFIXES) {
     if (part === allowed || part.startsWith(allowed)) return true
   }
   return false
-}
-
-/** The mode notice shape: user-role, trailing, never part of the system prompt. */
-function modeNotice(target) {
-  const text = target === PLAN
-    ? 'The user switched this session to OC Plan (opencode plan mode). This is a read-only planning slot: only inspections, read-only commands, and scratch work under the temporary directory are allowed; formal-directory writes and high-risk commands are denied. Do not present a plan as a plain reply — the user switches to OC Build when ready to execute. Do not use todo_write to track the planning phase.'
-    : 'The user switched this session to OC Build (opencode build mode). Implementation is allowed again: write files, run commands, and carry out the plan.'
-  return createUserMessage({
-    content: [{ type: 'text', text }],
-    source: { kind: 'opencode-plan-build', form: 'notice', summary: `mode:${target}` },
-  })
 }
 
 /** Flatten one derived message into markdown-ish text for export or transcript reads. */
@@ -205,10 +467,29 @@ export function apply(ctx, config = {}) {
         return { kind: 'error', text: `Unknown mode "${requested}". Use /mode ${planPreset} or /mode ${buildPreset}.` }
       }
       presets.set(session, target)
-      invocation.agent.inject(modeNotice(target))
-      return { kind: 'success', text: target === planPreset ? 'OC Plan — read-only planning.' : 'OC Build — execution allowed.' }
+      return { kind: 'success', text: target === planPreset ? 'OC Plan' : 'OC Build' }
     },
   })
+
+  // The current slot is materialized only when a request is assembled (i.e.
+  // when the user actually sends a message). Repeated Tab switches therefore
+  // leave no model-visible trace: only the value at send time enters history.
+  ctx.inject(['systemPrompt', 'permissionPresets'], (scope) => scope.effect(() => scope.systemPrompt.context({
+    name: 'opencode-mode:mode',
+    order: scope.systemPrompt.getContextOrder('SANDBOX_POLICY') + 1,
+    text: (context) => {
+      const session = context.agent?.session
+      if (session === undefined) return ''
+      const current = scope.get('permissionPresets')?.current(session)
+      if (current === planPreset) {
+        return 'Current opencode-style mode: OC Plan — read-only planning. Formal-directory writes and high-risk commands are denied by the runtime guard; switch to OC Build (/mode oc-build or Tab) when execution is needed.'
+      }
+      if (current === buildPreset) {
+        return 'Current opencode-style mode: OC Build — execution allowed (full access).'
+      }
+      return ''
+    },
+  }), 'opencode-plan-build: mode runtime context'))
 
   // `/undo` — message-level revert: replace the last user turn and everything
   // after it inside the surface. The log stays append-only, and the prefix
