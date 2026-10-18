@@ -343,6 +343,15 @@ export function apply(ctx, config = {}) {
     },
   })
 
+  // `/sessions` — host row backing the client popup picker; the client
+  // decorates it with the session list and switches via uiWorkspace.
+  ctx.commands.register({
+    definitionId: 'opencode-plan-build:sessions',
+    name: 'sessions',
+    description: 'Switch to another session (popup picker)',
+    handler: () => ({ kind: 'success', text: 'Pick a session from the popup; the left sidebar lists the same set.' }),
+  })
+
   // `/models` — alias of the built-in /model catalog (client popup owns it).
   ctx.commands.register({
     definitionId: 'opencode-plan-build:models',
