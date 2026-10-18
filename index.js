@@ -200,12 +200,13 @@ export function apply(ctx, config = {}) {
         const current = presets.current(session)
         return { kind: 'success', text: `Current mode: ${current}${current === planPreset ? ' (OC Plan)' : current === buildPreset ? ' (OC Build)' : ''}` }
       }
-      if (requested !== planPreset && requested !== buildPreset) {
+      const target = requested === 'toggle' ? (presets.current(session) === planPreset ? buildPreset : planPreset) : requested
+      if (target !== planPreset && target !== buildPreset) {
         return { kind: 'error', text: `Unknown mode "${requested}". Use /mode ${planPreset} or /mode ${buildPreset}.` }
       }
-      presets.set(session, requested)
-      invocation.agent.inject(modeNotice(requested))
-      return { kind: 'success', text: requested === planPreset ? 'OC Plan — read-only planning.' : 'OC Build — execution allowed.' }
+      presets.set(session, target)
+      invocation.agent.inject(modeNotice(target))
+      return { kind: 'success', text: target === planPreset ? 'OC Plan — read-only planning.' : 'OC Build — execution allowed.' }
     },
   })
 
