@@ -100,7 +100,7 @@ function test(name, fn) { tests.push({ name, fn }) }
 test('registers every requested command', () => {
   const { ctx, commands } = mockContext()
   apply(ctx, {})
-  for (const name of ['mode', 'undo', 'redo', 'rename', 'exportmd', 'seesession', 'models']) {
+  for (const name of ['mode', 'undo', 'redo', 'rename', 'exportmd', 'sessionread', 'models', 'effort']) {
     assert.ok(commands.has(name), `missing /${name}`)
   }
 })
@@ -338,7 +338,7 @@ test('/exportmd writes markdown into the requested directory', () => {
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
-test('/seesession lists sessions and reads another transcript', async () => {
+test('/sessionread lists sessions and reads another transcript', async () => {
   const { ctx, commands, services } = mockContext()
   const sessions = [
     { id: 'session-test' },
@@ -352,10 +352,10 @@ test('/seesession lists sessions and reads another transcript', async () => {
   })
   apply(ctx, {})
   const agent = { session: mockSession() }
-  const list = await commands.get('seesession').handler({ rawInput: '', agent })
+  const list = await commands.get('sessionread').handler({ rawInput: '', agent })
   assert.equal(list.kind, 'success')
   assert.match(list.text, /session-other/)
-  const read = await commands.get('seesession').handler({ rawInput: 'session-other', agent })
+  const read = await commands.get('sessionread').handler({ rawInput: 'session-other', agent })
   assert.equal(read.kind, 'success')
   assert.match(read.text, /transcript of session-other/)
 })

@@ -81,7 +81,7 @@ DSH 内置的 `/plan`（`dsh-plan-mode`）只注入系统提示词：工具目�
 - `/mode [oc-plan|oc-build|toggle]`、Tab 切换
 - `/undo` + `/redo`（消息级撤回/重做）
 - `/rename`（独立输入弹窗，接 `session.rename`）
-- `/sessions`（会话切换弹窗）、`/seesession`（选择其他会话并插入引用，只插入不发送）
+- `/sessions`（会话切换弹窗）、`/seesession`（选择其他会话并插入引用，只插入不发送；任意位置可用，`/see` 即可）、`/sessionread <前缀>`（按 id 前缀读取另一会话转录）
 - `/models`、`/effort`（模型/思考档位弹窗）
 - `/exportmd [目录]`（导出 markdown；内置 `/export` 是 ZIP）
 

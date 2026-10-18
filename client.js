@@ -207,10 +207,14 @@ window.__ModuleLoader__.load({
           },
         }), 'opencode-plan-build: /sessions popup'))
 
-        // /seesession: decorate with a picker over the other sessions; a pick
-        // inserts a canonical reference into the composer (never sends).
-        ctx.inject(['commandUi', 'sessions', 'conversation'], (scope) => scope.effect(() => scope.commandUi.decorate({
+        // /seesession: a client contribution (NOT a host command row). Host
+        // command rows that carry an input hint are only offered at the start
+        // of the composer; a contribution has no hint, so "/see" opens the
+        // picker anywhere in the draft. A pick inserts a canonical reference
+        // into the composer (never sends).
+        ctx.inject(['commandUi', 'sessions', 'conversation'], (scope) => scope.effect(() => scope.commandUi.register({
           name: 'seesession',
+          description: () => '选择另一个会话并插入引用（只插入，不发送）',
           available: () => true,
           ui: {
             kind: 'popupSelect',
@@ -232,7 +236,7 @@ window.__ModuleLoader__.load({
               // context at prompt admission.
               //
               // Prefer the composer shell's setDraft: it replaces the whole
-              // draft (removing the /seesession token) and keeps Lexical's
+              // draft (removing the trailing "/see" token) and keeps Lexical's
               // revision consistent, so the command layer's later consume is a
               // harmless no-op. Fall back to a DOM insert when the shell is
               // not reachable.
@@ -241,7 +245,7 @@ window.__ModuleLoader__.load({
                 const actx = scope.sessions.scope(session.sessionId)
                 const shell = scope.conversation.input.for(actx)
                 const current = shell.projection.clipboardText ?? ''
-                const cleaned = current.replace(/\/seesession/gu, '').trimEnd()
+                const cleaned = current.replace(/(?:^|\s)\/[A-Za-z][\w-]*\s*$/u, ' ').trimEnd()
                 shell.setDraft(cleaned === '' ? reference : `${cleaned} ${reference}`)
                 return
               } catch {

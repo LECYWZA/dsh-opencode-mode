@@ -2,9 +2,9 @@
  * opencode-plan-build — opencode 式 plan/build 挡位 for dsh.
  *
  * Host duties:
- *   1. `/mode oc-plan|oc-build` switches the session's permission slot and
- *      injects a mode notice as a trailing user message (prefix cache stays
- *      reusable; the system prompt is never rewritten).
+ *   1. `/mode oc-plan|oc-build` switches the session's permission slot; the
+ *      current slot is materialized into the runtime-context snapshot at each
+ *      request (no per-switch message; prefix cache stays reusable).
  *   2. `ctx.tools.guard()` enforces the OC Plan contract at dispatch time:
  *      formal-directory writes and high-risk commands are denied with a reason
  *      the model can act on ("switch to OC Build"), and sandbox escalation is
@@ -12,9 +12,10 @@
  *      KV prefix stays byte-identical.
  *   3. `/undo` + `/redo` (message-level revert: the tail is replaced inside the
  *      surface so the prefix before the revert point stays cache-reusable),
- *      `/rename`, `/export` (markdown to a directory), `/seesession` (another
- *      session's transcript), and `/models` as an alias of the built-in
- *      `/model` catalog.
+ *      `/rename`, `/export` (markdown to a directory), `/sessionread` (another
+ *      session's transcript by id prefix), and `/models` as an alias of the
+ *      built-in `/model` catalog. The `/seesession` reference picker is a
+ *      client-side contribution.
  *
  * @module dsh-opencode-mode
  */
@@ -616,11 +617,14 @@ export function apply(ctx, config = {}) {
     },
   })
 
-  // `/seesession [id-prefix]` — list sessions, or read another session's transcript.
+  // `/sessionread [id-prefix]` — list sessions, or read another session's transcript.
+  // The user-facing picker is the client `/seesession` contribution; this host
+  // row keeps the explicit prefix read (it carries an input hint, so DSH only
+  // offers it at the start of the composer).
   ctx.commands.register({
-    definitionId: 'opencode-plan-build:seesession',
-    name: 'seesession',
-    description: 'List sessions, or read another session transcript (read-only)',
+    definitionId: 'opencode-plan-build:sessionread',
+    name: 'sessionread',
+    description: 'List sessions, or read another session transcript by id prefix (read-only)',
     input: { hint: '[session id prefix]' },
     handler: async (invocation) => {
       const query = ctx.get('sessionQuery')
@@ -636,12 +640,12 @@ export function apply(ctx, config = {}) {
         const sessions = await query.listSessions()
         const match = sessions.find((session) => session.id.startsWith(prefix))
         if (match === undefined) return { kind: 'error', text: `No session matches "${prefix}".` }
-        if (match.id === currentId) return { kind: 'success', text: 'That is this session — use /seesession <other-id>.' }
+        if (match.id === currentId) return { kind: 'success', text: 'That is this session — use /sessionread <other-id>.' }
         const events = await query.readSession(match.id)
         const markdown = formatSession(events, { id: match.id })
         return { kind: 'success', text: markdown.length > 12000 ? `${markdown.slice(0, 12000)}\n… (truncated)` : markdown }
       } catch (error) {
-        return { kind: 'error', text: `seesession failed: ${error instanceof Error ? error.message : String(error)}` }
+        return { kind: 'error', text: `sessionread failed: ${error instanceof Error ? error.message : String(error)}` }
       }
     },
   })
