@@ -185,8 +185,10 @@ window.__ModuleLoader__.load({
         }), 'opencode-plan-build: chord shortcut'))
 
         // /sessions: decorate the host row with a session picker. Selecting a
-        // row opens that session (same set the left sidebar lists).
-        ctx.inject(['commandUi'], (scope) => scope.effect(() => scope.commandUi.decorate({
+        // row opens that session through the workspace navigation service (the
+        // same path a sidebar click takes). uiWorkspace must be injected: without
+        // it ctx.uiWorkspace is undefined and the pick silently does nothing.
+        ctx.inject(['commandUi', 'uiWorkspace'], (scope) => scope.effect(() => scope.commandUi.decorate({
           name: 'sessions',
           available: () => true,
           ui: {
@@ -202,7 +204,7 @@ window.__ModuleLoader__.load({
               }))
             },
             onSelect: (option) => {
-              ctx.uiWorkspace.openSession(option.id)
+              scope.uiWorkspace.openSession(option.id)
             },
           },
         }), 'opencode-plan-build: /sessions popup'))

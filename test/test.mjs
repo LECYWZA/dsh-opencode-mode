@@ -277,6 +277,25 @@ test('/undo replaces the last user turn in the surface', () => {
   assert.equal(session.appended[0].opts.surfaceOp.op, 'replace')
   assert.equal(session.appended[0].opts.surfaceOp.startSeq, 0)
   assert.equal(session.appended[0].opts.surfaceOp.endSeq, 1)
+  assert.deepEqual(session.appended[0].opts.sourceEventSeqs, [0, 1])
+})
+
+test('/undo cites every shadowed surface node (assistant and tool results)', () => {
+  const { ctx, commands, presets } = mockContext()
+  apply(ctx, {})
+  presets.currentName = BUILD
+  const session = mockSession({
+    events: [
+      { type: 'user/message', data: { content: [{ type: 'text', text: 'question' }], source: { kind: 'user' } } },
+      { type: 'assistant/message', data: { content: [{ type: 'text', text: 'answer' }] } },
+      { type: 'tool/result', data: { message: { role: 'tool', content: [] } } },
+    ],
+  })
+  const result = commands.get('undo').handler({ agent: { session }, rawInput: '' })
+  assert.equal(result.kind, 'success')
+  assert.deepEqual(session.appended[0].opts.sourceEventSeqs, [0, 1, 2])
+  assert.equal(session.appended[0].opts.surfaceOp.startSeq, 0)
+  assert.equal(session.appended[0].opts.surfaceOp.endSeq, 2)
 })
 
 test('/undo refuses an empty session', () => {

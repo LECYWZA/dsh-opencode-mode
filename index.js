@@ -504,11 +504,13 @@ export function apply(ctx, config = {}) {
       const nodes = session.surface.nodes
       let lastUserSeq
       let lastUserData
+      let lastUserIndex = -1
       for (let i = nodes.length - 1; i >= 0; i -= 1) {
         const event = session.eventAt(nodes[i])
         if (event?.type === 'user/message' && event.data?.source?.kind !== 'opencode-plan-build') {
           lastUserSeq = nodes[i]
           lastUserData = event.data
+          lastUserIndex = i
           break
         }
       }
@@ -524,7 +526,9 @@ export function apply(ctx, config = {}) {
         source: placeholder.source,
       }, {
         surfaceOp: { op: 'replace', startSeq: lastUserSeq, endSeq },
-        sourceEventSeqs: [lastUserSeq],
+        // Every shadowed surface node must be cited, not just the leading user
+        // message; the Session validator rejects a partial list.
+        sourceEventSeqs: nodes.slice(lastUserIndex),
       })
       undoState.set(session, { lastUserSeq, endSeq, before, revertedUser: lastUserData })
       return { kind: 'success', text: 'Reverted the last user turn (surface replace, log kept).' }
